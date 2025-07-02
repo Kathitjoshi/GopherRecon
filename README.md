@@ -2,6 +2,10 @@
 
 A high-performance, feature-rich TCP port scanner written in Go with advanced capabilities including service detection, banner grabbing, and comprehensive reporting.
 
+[![Go](https://img.shields.io/badge/Go-1.19%2B-00ADD8.svg?logo=go)]
+[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Protocol](https://img.shields.io/badge/Protocol-TCP-blue.svg)]
+
 ## 🚀 Features
 
 - **High Performance**: Multi-threaded scanning with configurable concurrency
