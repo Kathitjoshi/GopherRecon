@@ -2,9 +2,9 @@
 
 A high-performance, feature-rich TCP port scanner written in Go with advanced capabilities including service detection, banner grabbing, and comprehensive reporting.
 
-[![Go](https://img.shields.io/badge/Go-1.19%2B-00ADD8.svg?logo=go)]
+![Go](https://img.shields.io/badge/Go-1.19%2B-00ADD8.svg?logo=go)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Protocol](https://img.shields.io/badge/Protocol-TCP-blue.svg)]
+![Protocol](https://img.shields.io/badge/Protocol-TCP-blue.svg)
 
 ## 🚀 Features
 
@@ -22,17 +22,7 @@ A high-performance, feature-rich TCP port scanner written in Go with advanced ca
 ### Prerequisites
 - Go 1.19 or higher
 
-### Build from Source
-```bash
-git clone <repository-url>
-cd port-scanner
-go build -o portscan PortScanner.go
-```
 
-### Quick Install
-```bash
-go install github.com/Kathitjoshi/GopherRecon@latest
-```
 
 ## 🔧 Usage
 
