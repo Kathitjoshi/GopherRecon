@@ -4,12 +4,15 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
-	"flag"
+	"flag" // Used for command-line arguments
 	"fmt"
+	"html/template" // Used for web UI templates
 	"log"
 	"net"
+	"net/http" // Used for web UI server
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"sort"
 	"strconv"
@@ -20,7 +23,7 @@ import (
 )
 
 //-----------------------------------------------------------------------------
-// Data Structures
+// Core Port Scanner Data Structures
 //-----------------------------------------------------------------------------
 
 // PortResult represents the outcome of scanning a single port.
@@ -33,26 +36,26 @@ type PortResult struct {
 	Timestamp time.Time     `json:"timestamp"`         // Time when the scan result was recorded
 }
 
-// ScanResult aggregates the results of an entire scan operation.
-type ScanResult struct {
-	Host      string        `json:"host"`            // The target host that was scanned
-	StartTime time.Time     `json:"start_time"`      // When the scan began
-	EndTime   time.Time     `json:"end_time"`        // When the scan finished
-	Duration  time.Duration `json:"duration"`        // Total duration of the scan
-	Ports     []PortResult  `json:"ports"`           // List of individual port scan results
-	Summary   ScanSummary   `json:"summary"`         // Statistical summary of the scan
-	Error     string        `json:"error,omitempty"` // Any error encountered during the overall scan
+// FullScanResult aggregates the results of an entire scan operation.
+type FullScanResult struct {
+	Host      string          `json:"host"`            // The target host that was scanned
+	StartTime time.Time       `json:"start_time"`      // When the scan began
+	EndTime   time.Time       `json:"end_time"`        // When the scan finished
+	Duration  time.Duration   `json:"duration"`        // Total duration of the scan
+	Ports     []PortResult    `json:"ports"`           // List of individual port scan results
+	Summary   PortScanSummary `json:"summary"`         // Statistical summary of the scan
+	Error     string          `json:"error,omitempty"` // Any error encountered during the overall scan
 }
 
-// ScanSummary provides statistics about the scanned ports.
-type ScanSummary struct {
+// PortScanSummary provides statistics about the scanned ports.
+type PortScanSummary struct {
 	Total  int `json:"total_scanned"` // Total number of ports attempted
 	Open   int `json:"open_ports"`    // Number of open ports found
 	Closed int `json:"closed_ports"`  // Number of closed ports encountered
 }
 
-// Scanner manages the overall port scanning operation.
-type Scanner struct {
+// PortScanner manages the overall port scanning operation.
+type PortScanner struct {
 	host        string
 	timeout     time.Duration
 	threads     int
@@ -61,8 +64,26 @@ type Scanner struct {
 	bannerGrab  bool
 	results     []PortResult       // Stores the results of each port scan
 	mu          sync.RWMutex       // Mutex to protect access to 'results' slice
-	ctx         context.Context    // Context for cancellation
-	cancel      context.CancelFunc // Function to cancel the context
+	ctx         context.Context    // Context for cancellation of internal goroutines
+	cancel      context.CancelFunc // Function to cancel the internal context
+}
+
+//-----------------------------------------------------------------------------
+// Web UI Related Data Structures
+//-----------------------------------------------------------------------------
+
+// TemplateData for rendering the HTML UI.
+type TemplateData struct {
+	Title string
+	// ScanResult is now a pointer to FullScanResult
+	ScanResult     *FullScanResult
+	Error          string // Any error message to display in the UI
+	HostInput      string // Value to pre-fill the host input field
+	PortsInput     string // Value to pre-fill the ports input field
+	ThreadsInput   string // Value to pre-fill the threads input field
+	TimeoutInput   string // Value to pre-fill the timeout input field
+	BannerChecked  bool   // To control the banner grabbing checkbox state
+	ServiceChecked bool   // To control the service detection checkbox state
 }
 
 //-----------------------------------------------------------------------------
@@ -71,39 +92,26 @@ type Scanner struct {
 
 // commonServices maps well-known port numbers to their standard service names.
 var commonServices = map[int]string{
-	21:   "FTP",
-	22:   "SSH",
-	23:   "Telnet",
-	25:   "SMTP",
-	53:   "DNS",
-	80:   "HTTP",
-	110:  "POP3",
-	135:  "RPC",
-	139:  "NetBIOS",
-	143:  "IMAP",
-	443:  "HTTPS",
-	993:  "IMAPS",
-	995:  "POP3S",
-	1433: "MSSQL",
-	1521: "Oracle",
-	3306: "MySQL",
-	3389: "RDP",
-	5432: "PostgreSQL",
-	5900: "VNC",
-	6379: "Redis",
-	8080: "HTTP-Alt",
-	8443: "HTTPS-Alt",
+	21: "FTP", 22: "SSH", 23: "Telnet", 25: "SMTP", 53: "DNS",
+	80: "HTTP", 110: "POP3", 135: "RPC", 139: "NetBIOS", 143: "IMAP",
+	443: "HTTPS", 993: "IMAPS", 995: "POP3S", 1433: "MSSQL", 1521: "Oracle",
+	3306: "MySQL", 3389: "RDP", 5432: "PostgreSQL", 5900: "VNC", 6379: "Redis",
+	8080: "HTTP-Alt", 8443: "HTTPS-Alt",
 }
 
+// templates holds our parsed HTML templates for the UI.
+var templates *template.Template
+
 //-----------------------------------------------------------------------------
-// Scanner Methods
+// Port Scanner Methods
 //-----------------------------------------------------------------------------
 
-// NewScanner creates and returns a new Scanner instance, initialized with the
+// NewPortScanner creates and returns a new PortScanner instance, initialized with the
 // provided scanning parameters and a cancellable context.
-func NewScanner(host string, timeout time.Duration, threads int, verbose, serviceScan, bannerGrab bool) *Scanner {
+func NewPortScanner(host string, timeout time.Duration, threads int, verbose, serviceScan, bannerGrab bool) *PortScanner {
+	// Context for the *scanner's internal goroutines*, not the main server lifecycle
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Scanner{
+	return &PortScanner{
 		host:        host,
 		timeout:     timeout,
 		threads:     threads,
@@ -116,10 +124,26 @@ func NewScanner(host string, timeout time.Duration, threads int, verbose, servic
 	}
 }
 
+// NewPortScannerWithContext creates a PortScanner with a provided context for cancellation
+func NewPortScannerWithContext(ctx context.Context, host string, timeout time.Duration, threads int, verbose, serviceScan, bannerGrab bool) *PortScanner {
+	scanCtx, cancel := context.WithCancel(ctx)
+	return &PortScanner{
+		host:        host,
+		timeout:     timeout,
+		threads:     threads,
+		verbose:     verbose,
+		serviceScan: serviceScan,
+		bannerGrab:  bannerGrab,
+		results:     make([]PortResult, 0),
+		ctx:         scanCtx,
+		cancel:      cancel,
+	}
+}
+
 // grabBanner attempts to read and return the initial banner from an open connection.
 // It applies a short read deadline to prevent hanging on unresponsive services.
-func (s *Scanner) grabBanner(conn net.Conn) string {
-	if !s.bannerGrab {
+func (ps *PortScanner) grabBanner(conn net.Conn) string {
+	if !ps.bannerGrab {
 		return ""
 	}
 
@@ -143,26 +167,26 @@ func (s *Scanner) grabBanner(conn net.Conn) string {
 // It records the status, response time, and optionally banner/service info.
 // 'sem' is a semaphore channel for limiting concurrent goroutines.
 // 'wg' is a WaitGroup to signal completion.
-func (s *Scanner) scanPort(port int, sem chan struct{}, wg *sync.WaitGroup) {
+func (ps *PortScanner) scanPort(port int, sem chan struct{}, wg *sync.WaitGroup) {
 	defer wg.Done()          // Decrement the WaitGroup counter when done
 	defer func() { <-sem }() // Release a slot in the semaphore when done
 
 	// Check if the scan has been cancelled before attempting connection
 	select {
-	case <-s.ctx.Done():
+	case <-ps.ctx.Done():
 		return // Exit if context is cancelled
 	default:
 		// Continue if context is not cancelled
 	}
 
 	startTime := time.Now()
-	address := fmt.Sprintf("%s:%d", s.host, port)
+	address := fmt.Sprintf("%s:%d", ps.host, port)
 
 	// Attempt to establish a TCP connection with a timeout
-	conn, err := net.DialTimeout("tcp", address, s.timeout)
+	conn, err := net.DialTimeout("tcp", address, ps.timeout)
 	responseTime := time.Since(startTime)
 
-	result := PortResult{
+	result := PortResult{ // Use PortResult
 		Port:      port,
 		Response:  responseTime,
 		Timestamp: time.Now(),
@@ -171,44 +195,45 @@ func (s *Scanner) scanPort(port int, sem chan struct{}, wg *sync.WaitGroup) {
 	if err != nil {
 		// Port is closed or unreachable
 		result.Status = "closed"
-		if s.verbose {
-			// Log closed ports in JSON format for cloud logging
+		if ps.verbose {
+			// Log closed ports in JSON format for cloud logging (CLI only usually)
 			log.Printf(`{"event":"scan_result", "host":"%s", "port":%d, "status":"closed", "response_time":"%s", "error":"%v"}`,
-				s.host, port, responseTime, err)
+				ps.host, port, responseTime, err)
 		}
 	} else {
 		// Port is open
 		result.Status = "open"
 
 		// Detect common service if enabled
-		if s.serviceScan {
+		if ps.serviceScan {
 			if service, exists := commonServices[port]; exists {
 				result.Service = service
 			}
 		}
 
 		// Grab banner if enabled
-		result.Banner = s.grabBanner(conn)
+		result.Banner = ps.grabBanner(conn)
 		conn.Close() // Close the connection immediately after use
 
 		// Log open ports in JSON format for cloud logging
 		log.Printf(`{"event":"scan_result", "host":"%s", "port":%d, "status":"open", "service":"%s", "response_time":"%s", "banner":"%s"}`,
-			s.host, port, result.Service, responseTime, strings.ReplaceAll(result.Banner, "\n", "\\n"))
+			ps.host, port, result.Service, responseTime, strings.ReplaceAll(result.Banner, "\n", "\\n"))
 	}
 
 	// Safely add result to the shared slice
-	s.mu.Lock()
-	s.results = append(s.results, result)
-	s.mu.Unlock()
+	ps.mu.Lock()
+	ps.results = append(ps.results, result)
+	ps.mu.Unlock()
 }
 
 // Run initiates and manages the port scanning process.
-// It takes a list of ports to scan and returns the complete ScanResult.
-func (s *Scanner) Run(ports []int) ScanResult {
+// It takes a list of ports to scan and returns the complete FullScanResult.
+func (ps *PortScanner) Run(ports []int) FullScanResult { // Return FullScanResult
 	startTime := time.Now()
 	var scanError error // To capture any error that might interrupt the scan
 
-	// Set up signal handling to allow graceful shutdown (e.g., Ctrl+C)
+	// Setup internal cancellation via context
+	// For CLI, this allows Ctrl+C to stop it. For UI, the request context drives it.
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
@@ -217,36 +242,37 @@ func (s *Scanner) Run(ports []int) ScanResult {
 		select {
 		case <-sigChan:
 			log.Println(`{"event":"scan_interruption", "message":"Scan interrupted by user signal"}`)
-			s.cancel() // Signal the scanner's context to cancel
-		case <-s.ctx.Done():
-			// Context was cancelled externally (e.g., due to an unhandled error upstream)
+			ps.cancel() // Signal the scanner's context to cancel
+		case <-ps.ctx.Done():
+			// Context was cancelled externally (e.g., by HTTP request cancellation in UI mode)
 			log.Println(`{"event":"scan_interruption", "message":"Scan context cancelled internally"}`)
 		}
 	}()
 
 	// Initial logging of scan parameters
 	log.Printf(`{"event":"scan_start", "host":"%s", "ports_to_scan":%d, "threads":%d, "timeout":"%s", "service_detection":%t, "banner_grabbing":%t}`,
-		s.host, len(ports), s.threads, s.timeout, s.serviceScan, s.bannerGrab)
-	fmt.Println("Press Ctrl+C to stop the scan (only visible in CLI mode)") // User-friendly message for CLI
+		ps.host, len(ports), ps.threads, ps.timeout, ps.serviceScan, ps.bannerGrab)
+	// In UI mode, this message is not typically shown directly to user, but goes to logs.
+	// In CLI mode, the "Press Ctrl+C" message would be printed here.
 
 	// Semaphore to limit concurrent goroutines
-	sem := make(chan struct{}, s.threads)
+	sem := make(chan struct{}, ps.threads)
 	var wg sync.WaitGroup // WaitGroup to wait for all goroutines to finish
 
 	// Iterate over each port and start a scan goroutine
 	for _, port := range ports {
 		// Check for cancellation before launching new goroutine
 		select {
-		case <-s.ctx.Done():
-			scanError = s.ctx.Err() // Capture the cancellation error
-			goto EndScan            // Jump to the cleanup section
+		case <-ps.ctx.Done():
+			scanError = ps.ctx.Err() // Capture the cancellation error
+			goto EndScan             // Jump to the cleanup section
 		default:
-			// Continue if context is active
+			// Continue if context is not cancelled
 		}
 
-		wg.Add(1)                     // Increment WaitGroup counter for each new goroutine
-		sem <- struct{}{}             // Acquire a slot in the semaphore (blocks if full)
-		go s.scanPort(port, sem, &wg) // Launch port scan in a new goroutine
+		wg.Add(1)                      // Increment WaitGroup counter for each new goroutine
+		sem <- struct{}{}              // Acquire a slot in the semaphore (blocks if full)
+		go ps.scanPort(port, sem, &wg) // Launch port scan in a new goroutine
 	}
 
 	wg.Wait() // Wait for all scan goroutines to complete
@@ -256,17 +282,17 @@ EndScan: // Label for the goto statement on cancellation
 	duration := endTime.Sub(startTime)
 
 	// Safely retrieve and sort the results
-	s.mu.RLock() // Acquire read lock before accessing results
-	sortedResults := make([]PortResult, len(s.results))
-	copy(sortedResults, s.results)
-	s.mu.RUnlock() // Release read lock
+	ps.mu.RLock() // Acquire read lock before accessing results
+	sortedResults := make([]PortResult, len(ps.results))
+	copy(sortedResults, ps.results)
+	ps.mu.RUnlock() // Release read lock
 
 	sort.Slice(sortedResults, func(i, j int) bool {
 		return sortedResults[i].Port < sortedResults[j].Port
 	})
 
 	// Calculate scan summary
-	summary := ScanSummary{Total: len(sortedResults)}
+	summary := PortScanSummary{Total: len(sortedResults)}
 	for _, res := range sortedResults {
 		if res.Status == "open" {
 			summary.Open++
@@ -275,9 +301,9 @@ EndScan: // Label for the goto statement on cancellation
 		}
 	}
 
-	// Assemble the final ScanResult
-	result := ScanResult{
-		Host:      s.host,
+	// Assemble the final FullScanResult
+	result := FullScanResult{ // Use FullScanResult
+		Host:      ps.host,
 		StartTime: startTime,
 		EndTime:   endTime,
 		Duration:  duration,
@@ -290,7 +316,7 @@ EndScan: // Label for the goto statement on cancellation
 
 	// Final scan completion log
 	log.Printf(`{"event":"scan_finished", "host":"%s", "status":"%s", "duration":"%s", "open_ports":%d, "total_ports":%d, "error":"%s"}`,
-		s.host, func() string {
+		result.Host, func() string {
 			if scanError != nil {
 				return "interrupted"
 			}
@@ -301,7 +327,7 @@ EndScan: // Label for the goto statement on cancellation
 }
 
 //-----------------------------------------------------------------------------
-// Helper Functions
+// Helper Functions (for both CLI and UI)
 //-----------------------------------------------------------------------------
 
 // parsePortRange parses a string containing single ports, comma-separated lists,
@@ -422,8 +448,9 @@ func validateHost(host string) error {
 	return nil
 }
 
-// generateReport converts the ScanResult into a byte slice based on the specified format.
-func generateReport(scanResult ScanResult, format string) ([]byte, error) {
+// generateReport converts the FullScanResult into a byte slice based on the specified format.
+// (This is primarily for CLI output, not used by the integrated UI directly)
+func generateReport(scanResult FullScanResult, format string) ([]byte, error) {
 	var content []byte
 	var err error
 
@@ -443,7 +470,7 @@ func generateReport(scanResult ScanResult, format string) ([]byte, error) {
 }
 
 // generateTextReport creates a human-readable, multi-line text report.
-func generateTextReport(scanResult ScanResult) string {
+func generateTextReport(scanResult FullScanResult) string {
 	var report strings.Builder
 
 	report.WriteString("Port Scan Report\n")
@@ -492,7 +519,7 @@ func generateTextReport(scanResult ScanResult) string {
 }
 
 // generateCSVReport creates a CSV formatted string of the scan results.
-func generateCSVReport(scanResult ScanResult) string {
+func generateCSVReport(scanResult FullScanResult) string {
 	var report strings.Builder
 
 	// CSV Header
@@ -513,7 +540,339 @@ func generateCSVReport(scanResult ScanResult) string {
 }
 
 //-----------------------------------------------------------------------------
-// Main Function
+// Web UI Handlers & Helpers (Integrated)
+//-----------------------------------------------------------------------------
+
+// handleHome serves the main page with the scan input form for the UI mode.
+func handleHome(w http.ResponseWriter, r *http.Request) {
+	// Only serve "/" path, redirect others or show 404
+	if r.URL.Path != "/" {
+		http.NotFound(w, r)
+		return
+	}
+
+	data := TemplateData{
+		Title:          "Go Port Scanner UI",
+		HostInput:      "scanme.nmap.org", // Default values for convenience
+		PortsInput:     "80,443,22",
+		ThreadsInput:   "100",
+		TimeoutInput:   "2s",
+		ServiceChecked: true,  // Default to checked
+		BannerChecked:  false, // Default to unchecked
+	}
+	renderTemplate(w, "index.html", data)
+}
+
+// handleScan processes the scan request from the UI, executes the integrated scanner logic,
+// and renders the results.
+func handleScan(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Parse form values
+	host := r.FormValue("host")
+	portsStr := r.FormValue("ports")
+	threadsStr := r.FormValue("threads")
+	timeoutStr := r.FormValue("timeout")
+	banner := r.FormValue("banner")   // "on" if checked, "" otherwise
+	service := r.FormValue("service") // "on" if checked, "" otherwise
+
+	// Initialize template data with submitted inputs for persistence
+	data := TemplateData{
+		Title:          "Go Port Scanner UI", // Will be updated to results title
+		HostInput:      host,
+		PortsInput:     portsStr,
+		ThreadsInput:   threadsStr,
+		TimeoutInput:   timeoutStr,
+		BannerChecked:  banner == "on",
+		ServiceChecked: service == "on",
+	}
+
+	// Basic input validation
+	if host == "" || portsStr == "" {
+		data.Error = "Host and Ports are required."
+		renderTemplate(w, "index.html", data)
+		return
+	}
+
+	// Parse threads (use default if empty or invalid)
+	threads := runtime.NumCPU() * 50 // Default
+	if t, err := strconv.Atoi(threadsStr); err == nil && t > 0 {
+		threads = t
+	}
+
+	// Parse timeout (use default if empty or invalid)
+	timeout := 2 * time.Second // Default
+	if t, err := time.ParseDuration(timeoutStr); err == nil && t > 0 {
+		timeout = t
+	}
+
+	// Validate host (DNS resolution)
+	if err := validateHost(host); err != nil {
+		data.Error = fmt.Sprintf("Host validation failed: %v", err)
+		renderTemplate(w, "index.html", data)
+		return
+	}
+
+	// Parse ports string into a slice of integers
+	ports, err := parsePortRange(portsStr)
+	if err != nil {
+		data.Error = fmt.Sprintf("Invalid port range/list: %v", err)
+		renderTemplate(w, "index.html", data)
+		return
+	}
+	if len(ports) == 0 {
+		data.Error = "No valid ports to scan after parsing. Please provide a valid range or list."
+		renderTemplate(w, "index.html", data)
+		return
+	}
+
+	log.Printf("INFO: Web-triggered scan for host: %s, ports: %s (threads: %d, timeout: %s, banner: %t, service: %t)",
+		host, portsStr, threads, timeout.String(), data.BannerChecked, data.ServiceChecked)
+
+	// Create and run the PortScanner instance using the HTTP request's context
+	portScanner := NewPortScannerWithContext(r.Context(), host, timeout, threads, false, data.ServiceChecked, data.BannerChecked) // verbose false for UI
+	fullScanResult := portScanner.Run(ports)                                                                                      // This executes the scan directly
+
+	data.ScanResult = &fullScanResult                          // Attach the scan result to template data
+	data.Title = fmt.Sprintf("Port Scan Results for %s", host) // Update page title
+
+	if fullScanResult.Error != "" {
+		data.Error = fullScanResult.Error // Display scanner errors in UI
+	}
+
+	// Render the template with the results (or error message)
+	renderTemplate(w, "index.html", data)
+}
+
+// renderTemplate parses and executes the specified HTML template.
+func renderTemplate(w http.ResponseWriter, tmpl string, data TemplateData) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	err := templates.ExecuteTemplate(w, tmpl, data)
+	if err != nil {
+		log.Printf("Error executing template %s: %v", tmpl, err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+	}
+}
+
+// createDefaultTemplate creates a simple HTML template for the UI.
+// This function will be called once if the templates/index.html file is missing.
+func createDefaultTemplate(filename string) error {
+	content := `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{.Title}}</title>
+    <style>
+        body { 
+            font-family: sans-serif; 
+            margin: 20px; 
+            background-color: #f4f4f4; 
+            color: #333; 
+            line-height: 1.6;
+        }
+        .container { 
+            max-width: 900px; 
+            margin: 0 auto; 
+            background-color: #fff; 
+            padding: 20px; 
+            border-radius: 8px; 
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1); 
+        }
+        h1, h2 { color: #0056b3; }
+        .form-section { 
+            margin-bottom: 30px; 
+            padding: 20px; 
+            border: 1px solid #ddd; 
+            border-radius: 8px; 
+            background-color: #e9f0f7; 
+        }
+        .form-section label { 
+            display: block; 
+            margin-bottom: 5px; 
+            font-weight: bold; 
+        }
+        .form-section input[type="text"],
+        .form-section input[type="number"] {
+            width: calc(100% - 22px);
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            margin-bottom: 10px;
+        }
+        .form-section button { 
+            background-color: #007bff; 
+            color: white; 
+            padding: 10px 20px; 
+            border: none; 
+            border-radius: 4px; 
+            cursor: pointer; 
+            font-size: 16px; 
+        }
+        .form-section button:hover { background-color: #0056b3; }
+        .checkbox-group { 
+            display: flex; 
+            align-items: center; 
+            margin-bottom: 10px; 
+        }
+        .checkbox-group label { 
+            margin-bottom: 0; 
+            margin-left: 5px; 
+        }
+        .error-message { 
+            color: red; 
+            background-color: #ffe0e0; 
+            border: 1px solid red; 
+            padding: 10px; 
+            border-radius: 5px; 
+            margin-bottom: 20px; 
+        }
+        .results-section { 
+            margin-top: 30px; 
+            border-top: 2px solid #0056b3; 
+            padding-top: 20px; 
+        }
+        .summary-box { 
+            display: flex; 
+            justify-content: space-around; 
+            background-color: #f0f8ff; 
+            padding: 15px; 
+            border-radius: 8px; 
+            margin-bottom: 20px; 
+            border: 1px solid #cfe2ff; 
+            flex-wrap: wrap; 
+        }
+        .summary-item { 
+            text-align: center; 
+            margin: 5px 10px; 
+        }
+        .summary-item strong { 
+            display: block; 
+            font-size: 1.2em; 
+            color: #007bff; 
+        }
+        table { 
+            width: 100%; 
+            border-collapse: collapse; 
+            margin-top: 20px; 
+        }
+        th, td { 
+            border: 1px solid #ddd; 
+            padding: 8px; 
+            text-align: left; 
+        }
+        th { background-color: #e2e2e2; }
+        tr:nth-child(even) { background-color: #f9f9f9; }
+        .status-open { color: green; font-weight: bold; }
+        .status-closed { color: gray; }
+        .no-results { 
+            text-align: center; 
+            color: #666; 
+            font-style: italic; 
+        }
+        pre { 
+            background-color: #eee; 
+            padding: 10px; 
+            border-radius: 4px; 
+            overflow-x: auto; 
+            white-space: pre-wrap; 
+            word-break: break-all; 
+            font-size: 0.9em; 
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>{{.Title}}</h1>
+
+        <div class="form-section">
+            <h2>Start a New Port Scan</h2>
+            {{if .Error}}
+            <div class="error-message">{{.Error}}</div>
+            {{end}}
+            <form action="/scan" method="POST">
+                <label for="host">Target Host (IP or Domain):</label>
+                <input type="text" id="host" name="host" value="{{.HostInput}}" placeholder="e.g., scanme.nmap.org" required>
+
+                <label for="ports">Ports (e.g., 80,443,1-1000):</label>
+                <input type="text" id="ports" name="ports" value="{{.PortsInput}}" placeholder="e.g., 1-1024,8080" required>
+
+                <label for="threads">Concurrent Threads:</label>
+                <input type="number" id="threads" name="threads" value="{{.ThreadsInput}}" min="1" placeholder="e.g., 100">
+
+                <label for="timeout">Connection Timeout (e.g., 500ms, 2s, 1m):</label>
+                <input type="text" id="timeout" name="timeout" value="{{.TimeoutInput}}" placeholder="e.g., 2s">
+
+                <div class="checkbox-group">
+                    <input type="checkbox" id="service" name="service" {{if .ServiceChecked}}checked{{end}}>
+                    <label for="service">Enable Service Detection</label>
+                </div>
+
+                <div class="checkbox-group">
+                    <input type="checkbox" id="banner" name="banner" {{if .BannerChecked}}checked{{end}}>
+                    <label for="banner">Enable Banner Grabbing</label>
+                </div>
+
+                <button type="submit">Scan Now</button>
+            </form>
+        </div>
+
+        {{if .ScanResult}}
+        <div class="results-section">
+            <h2>Results for {{.ScanResult.Host}}</h2>
+            <p><strong>Started:</strong> {{.ScanResult.StartTime.Format "2006-01-02 15:04:05 MST"}}</p>
+            <p><strong>Finished:</strong> {{.ScanResult.EndTime.Format "2006-01-02 15:04:05 MST"}}</p>
+            <p><strong>Duration:</strong> {{.ScanResult.Duration}}</p>
+            {{if .ScanResult.Error}}
+            <p class="error-message"><strong>Scan Error:</strong> {{.ScanResult.Error}}</p>
+            {{end}}
+
+            <div class="summary-box">
+                <div class="summary-item">Total Ports: <strong>{{.ScanResult.Summary.Total}}</strong></div>
+                <div class="summary-item">Open Ports: <strong style="color: green;">{{.ScanResult.Summary.Open}}</strong></div>
+                <div class="summary-item">Closed Ports: <strong style="color: gray;">{{.ScanResult.Summary.Closed}}</strong></div>
+            </div>
+
+            <h3>Port Details:</h3>
+            {{if .ScanResult.Ports}}
+            <table>
+                <thead>
+                    <tr>
+                        <th>Port</th>
+                        <th>Status</th>
+                        <th>Service</th>
+                        <th>Response Time</th>
+                        <th>Banner</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {{range .ScanResult.Ports}}
+                    <tr>
+                        <td>{{.Port}}</td>
+                        <td class="status-{{.Status}}">{{.Status}}</td>
+                        <td>{{if .Service}}{{.Service}}{{else}}Unknown{{end}}</td>
+                        <td>{{.Response}}</td>
+                        <td>{{if .Banner}}<pre>{{.Banner}}</pre>{{else}}-{{end}}</td>
+                    </tr>
+                    {{end}}
+                </tbody>
+            </table>
+            {{else}}
+            <p class="no-results">No results to display.</p>
+            {{end}}
+        </div>
+        {{end}}
+    </div>
+</body>
+</html>`
+	return os.WriteFile(filename, []byte(content), 0644)
+}
+
+//-----------------------------------------------------------------------------
+// Main Function (Unified CLI & UI)
 //-----------------------------------------------------------------------------
 
 func main() {
@@ -523,112 +882,190 @@ func main() {
 	log.SetFlags(0)
 
 	// Define command-line flags
-	host := flag.String("host", "localhost", "Target host to scan (e.g., example.com or 192.168.1.1)")
-	portRange := flag.String("ports", "1-1024", "Port range (e.g., \"80,443,8080\" or \"1-1000\" or \"1-100,8080-8081\")")
-	portFile := flag.String("port-file", "", "Path to a file containing ports to scan (one port number per line)")
-	timeout := flag.Duration("timeout", 2*time.Second, "Connection timeout duration (e.g., \"500ms\", \"2s\", \"1m\")")
-	threads := flag.Int("threads", runtime.NumCPU()*50, "Maximum number of concurrent goroutines for scanning")
-	verbose := flag.Bool("verbose", false, "Enable verbose output to log closed ports (in addition to open ports)")
-	serviceScan := flag.Bool("service", true, "Enable detection of common services based on port number")
-	bannerGrab := flag.Bool("banner", false, "Enable banner grabbing to extract initial service responses")
-	outputFile := flag.String("output", "", "Path to the file where scan results will be saved")
-	outputFormat := flag.String("format", "txt", "Output format for the report file (available: \"txt\", \"json\", \"csv\")")
+	hostCLI := flag.String("host", "", "Target host to scan (CLI only)")
+	portRangeCLI := flag.String("ports", "", "Port range (CLI only)")
+	portFileCLI := flag.String("port-file", "", "File containing ports to scan (CLI only)")
+	timeoutCLI := flag.Duration("timeout", 2*time.Second, "Connection timeout duration (CLI only)")
+	threadsCLI := flag.Int("threads", runtime.NumCPU()*50, "Maximum concurrent goroutines for scanning (CLI only)")
+	verboseCLI := flag.Bool("verbose", false, "Enable verbose output to log closed ports (CLI only)")
+	serviceScanCLI := flag.Bool("service", true, "Enable service detection (CLI only)")
+	bannerGrabCLI := flag.Bool("banner", false, "Enable banner grabbing (CLI only)")
+	outputFileCLI := flag.String("output", "", "Path to the file where scan results will be saved (CLI only)")
+	outputFormatCLI := flag.String("format", "txt", "Output format for the report file (CLI only: \"txt\", \"json\", \"csv\")")
+
+	runUI := flag.Bool("ui", false, "Run as a web UI server on :8080 (CLI flags ignored)")
+	uiPort := flag.String("ui-port", "8080", "Port for the web UI server to listen on (UI mode only)")
 
 	// Custom usage message for --help
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Enhanced TCP Port Scanner\n\n")
-		fmt.Fprintf(os.Stderr, "A concurrent TCP port scanner with service detection and banner grabbing capabilities.\n\n")
+		fmt.Fprintf(os.Stderr, "Enhanced TCP Port Scanner (CLI & Web UI)\n\n")
 		fmt.Fprintf(os.Stderr, "Usage: %s [OPTIONS]\n\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "Modes:\n")
+		fmt.Fprintf(os.Stderr, "  Default (CLI Mode): Performs a single scan and exits.\n")
+		fmt.Fprintf(os.Stderr, "  Web UI Mode: Runs a local web server to provide a graphical interface for scanning.\n\n")
 		fmt.Fprintf(os.Stderr, "Options:\n")
 		flag.PrintDefaults() // Prints all defined flags and their default values/descriptions
-		fmt.Fprintf(os.Stderr, "\nExamples:\n")
+		fmt.Fprintf(os.Stderr, "\nCLI Mode Examples:\n")
 		fmt.Fprintf(os.Stderr, "  Scan common web ports on example.com:\n")
 		fmt.Fprintf(os.Stderr, "    %s -host example.com -ports 80,443,8080\n\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  Scan a range with more threads and save JSON output:\n")
 		fmt.Fprintf(os.Stderr, "    %s -host 192.168.1.1 -ports 1-1000 -threads 200 -output results.json -format json\n\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "  Scan ports from a file with banner grabbing (verbose output):\n")
-		fmt.Fprintf(os.Stderr, "    %s -host target.com -port-file ports.txt -banner -verbose -output results.csv -format csv\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "Web UI Mode Examples:\n")
+		fmt.Fprintf(os.Stderr, "  Run UI on default port 8080:\n")
+		fmt.Fprintf(os.Stderr, "    %s -ui\n\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  Run UI on a custom port 9000:\n")
+		fmt.Fprintf(os.Stderr, "    %s -ui -ui-port 9000\n", os.Args[0])
 	}
 
 	flag.Parse() // Parse command-line arguments into defined flags
 
-	// Validate the target host
-	if err := validateHost(*host); err != nil {
-		log.Fatalf(`{"event":"validation_error", "message":"Host resolution failed", "host":"%s", "error":"%v"}`, *host, err)
-	}
+	if *runUI {
+		// --- Run as Web UI Server ---
+		log.Printf("INFO: Starting web UI server on :%s", *uiPort)
 
-	// Determine ports to scan from either range or file
-	var portsToScan []int
-	var err error
-	if *portFile != "" {
-		portsToScan, err = loadPortsFromFile(*portFile)
-		if err != nil {
-			log.Fatalf(`{"event":"config_error", "message":"Failed to load ports from file", "file":"%s", "error":"%v"}`, *portFile, err)
+		// Explicitly "use" CLI-only flags to satisfy the compiler when in UI mode.
+		// These variables are always declared due to flag.String/flag.Duration/flag.Int calls.
+		// We dereference them once and assign to `_` to signal to the compiler they are used.
+		_ = *hostCLI
+		_ = *portRangeCLI
+		_ = *portFileCLI
+		_ = *timeoutCLI
+		_ = *threadsCLI
+		_ = *verboseCLI
+		_ = *serviceScanCLI
+		_ = *bannerGrabCLI
+		_ = *outputFileCLI
+		_ = *outputFormatCLI
+
+		// Create 'templates' directory if it doesn't exist
+		templatesDir := "templates"
+		if err := os.MkdirAll(templatesDir, 0755); err != nil {
+			log.Fatalf(`{"event":"startup_error", "message":"Failed to create templates directory", "dir":"%s", "error":"%v"}`, templatesDir, err)
 		}
+
+		// Create default 'index.html' template if it's missing or remove existing corrupted one
+		defaultTemplatePath := filepath.Join(templatesDir, "index.html")
+
+		// Always remove and recreate the template to avoid corruption issues
+		if _, err := os.Stat(defaultTemplatePath); err == nil {
+			log.Printf("INFO: Removing existing template %q to recreate it...", defaultTemplatePath)
+			os.Remove(defaultTemplatePath)
+		}
+
+		log.Printf("INFO: Creating fresh template %q...", defaultTemplatePath)
+		if err := createDefaultTemplate(defaultTemplatePath); err != nil {
+			log.Fatalf(`{"event":"startup_error", "message":"Failed to create default index.html template", "file":"%s", "error":"%v"}`, defaultTemplatePath, err)
+		}
+
+		// Parse all HTML templates from the 'templates' directory
+		var err error
+		templates, err = template.ParseGlob(filepath.Join(templatesDir, "*.html"))
+		if err != nil {
+			log.Fatalf(`{"event":"startup_error", "message":"Failed to parse templates", "dir":"%s", "error":"%v"}`, templatesDir, err)
+		}
+		log.Println("INFO: Templates loaded successfully for UI.")
+
+		// Register HTTP Handlers for the UI
+		http.HandleFunc("/", handleHome)
+		http.HandleFunc("/scan", handleScan) // This handles the scan submission
+
+		log.Printf("INFO: Web UI server listening on http://localhost:%s", *uiPort)
+		// This blocks forever, serving HTTP requests. No explicit top-level context/cancel needed here.
+		log.Fatal(http.ListenAndServe(":"+*uiPort, nil))
+
 	} else {
-		portsToScan, err = parsePortRange(*portRange)
-		if err != nil {
-			log.Fatalf(`{"event":"config_error", "message":"Failed to parse port range", "range":"%s", "error":"%v"}`, *portRange, err)
+		// --- Run as CLI Tool ---
+		log.Println("INFO: Running in CLI mode.")
+		// Check if host is provided for CLI mode
+		if *hostCLI == "" {
+			fmt.Fprintf(os.Stderr, "Error: --host is required in CLI mode. Use -h for help.\n")
+			os.Exit(1)
 		}
-	}
 
-	// Ensure there are valid ports to scan
-	if len(portsToScan) == 0 {
-		log.Fatalf(`{"event":"config_error", "message":"No valid ports to scan specified. Please check --ports or --port-file."}`)
-	}
+		if *portRangeCLI == "" && *portFileCLI == "" {
+			fmt.Fprintf(os.Stderr, "Error: Either --ports or --port-file is required in CLI mode. Use -h for help.\n")
+			os.Exit(1)
+		}
 
-	// Validate thread count
-	if *threads <= 0 {
-		log.Fatalf(`{"event":"config_error", "message":"Thread count must be a positive integer, received: %d"}`, *threads)
-	}
+		// Validate the target host
+		if err := validateHost(*hostCLI); err != nil {
+			log.Fatalf(`{"event":"validation_error", "message":"Host resolution failed", "host":"%s", "error":"%v"}`, *hostCLI, err)
+		}
 
-	// Initialize and run the scanner
-	scanner := NewScanner(*host, *timeout, *threads, *verbose, *serviceScan, *bannerGrab)
-	finalScanResult := scanner.Run(portsToScan)
-
-	// Save results to file if an output path is provided
-	if *outputFile != "" {
-		reportContent, err := generateReport(finalScanResult, *outputFormat)
-		if err != nil {
-			log.Printf(`{"event":"report_error", "message":"Failed to generate report", "format":"%s", "error":"%v"}`, *outputFormat, err)
+		// Determine ports to scan from either range or file
+		var portsToScan []int
+		var err error
+		if *portFileCLI != "" {
+			portsToScan, err = loadPortsFromFile(*portFileCLI)
+			if err != nil {
+				log.Fatalf(`{"event":"config_error", "message":"Failed to load ports from file", "file":"%s", "error":"%v"}`, *portFileCLI, err)
+			}
 		} else {
-			if err := os.WriteFile(*outputFile, reportContent, 0644); err != nil {
-				log.Printf(`{"event":"file_write_error", "message":"Failed to write report to file", "file":"%s", "error":"%v"}`, *outputFile, err)
-			} else {
-				log.Printf(`{"event":"report_saved", "message":"Scan report successfully saved", "file":"%s", "format":"%s"}`, *outputFile, *outputFormat)
+			portsToScan, err = parsePortRange(*portRangeCLI)
+			if err != nil {
+				log.Fatalf(`{"event":"config_error", "message":"Failed to parse port range", "range":"%s", "error":"%v"}`, *portRangeCLI, err)
 			}
 		}
-	} else {
-		// If no output file is specified, print a user-friendly summary to standard output
-		fmt.Println("\n--- Scan Summary ---")
-		fmt.Printf("Target Host: %s\n", finalScanResult.Host)
-		fmt.Printf("Scan Duration: %s\n", finalScanResult.Duration.Round(time.Millisecond))
-		fmt.Printf("Ports Scanned: %d\n", finalScanResult.Summary.Total)
-		fmt.Printf("Open Ports: %d\n", finalScanResult.Summary.Open)
-		if finalScanResult.Error != "" {
-			fmt.Printf("Scan Status: %s\n", finalScanResult.Error)
-		} else {
-			fmt.Println("Scan Status: Completed")
+
+		// Ensure there are valid ports to scan
+		if len(portsToScan) == 0 {
+			log.Fatalf(`{"event":"config_error", "message":"No valid ports to scan specified. Please check --ports or --port-file."}`)
 		}
 
-		if finalScanResult.Summary.Open > 0 {
-			fmt.Println("\nOpen Ports:")
-			for _, port := range finalScanResult.Ports {
-				if port.Status == "open" {
-					serviceInfo := ""
-					if port.Service != "" {
-						serviceInfo = fmt.Sprintf(" (%s)", port.Service)
-					}
-					bannerInfo := ""
-					if port.Banner != "" {
-						bannerInfo = fmt.Sprintf(" - %q", port.Banner)
-					}
-					fmt.Printf("  %d/tcp%s - %s%s\n", port.Port, serviceInfo, port.Response.Round(time.Microsecond), bannerInfo)
+		// Validate thread count
+		if *threadsCLI <= 0 {
+			log.Fatalf(`{"event":"config_error", "message":"Thread count must be a positive integer, received: %d"}`, *threadsCLI)
+		}
+
+		// Initialize and run the scanner
+		// In CLI mode, we can show verbose output if requested
+		scanner := NewPortScanner(*hostCLI, *timeoutCLI, *threadsCLI, *verboseCLI, *serviceScanCLI, *bannerGrabCLI)
+		finalScanResult := scanner.Run(portsToScan)
+
+		// Save results to file if an output path is provided
+		if *outputFileCLI != "" {
+			reportContent, err := generateReport(finalScanResult, *outputFormatCLI)
+			if err != nil {
+				log.Printf(`{"event":"report_error", "message":"Failed to generate report", "format":"%s", "error":"%v"}`, *outputFormatCLI, err)
+			} else {
+				if err := os.WriteFile(*outputFileCLI, reportContent, 0644); err != nil {
+					log.Printf(`{"event":"file_write_error", "message":"Failed to write report to file", "file":"%s", "error":"%v"}`, *outputFileCLI, err)
+				} else {
+					log.Printf(`{"event":"report_saved", "message":"Scan report successfully saved", "file":"%s", "format":"%s"}`, *outputFileCLI, *outputFormatCLI)
 				}
 			}
 		} else {
-			fmt.Println("No open ports found.")
+			// If no output file is specified, print a user-friendly summary to standard output
+			fmt.Println("\n--- Scan Summary ---")
+			fmt.Printf("Target Host: %s\n", finalScanResult.Host)
+			fmt.Printf("Scan Duration: %s\n", finalScanResult.Duration.Round(time.Millisecond))
+			fmt.Printf("Ports Scanned: %d\n", finalScanResult.Summary.Total)
+			fmt.Printf("Open Ports: %d\n", finalScanResult.Summary.Open)
+			if finalScanResult.Error != "" {
+				fmt.Printf("Scan Status: %s\n", finalScanResult.Error)
+			} else {
+				fmt.Println("Scan Status: Completed")
+			}
+
+			if finalScanResult.Summary.Open > 0 {
+				fmt.Println("\nOpen Ports:")
+				for _, port := range finalScanResult.Ports {
+					if port.Status == "open" {
+						serviceInfo := ""
+						if port.Service != "" {
+							serviceInfo = fmt.Sprintf(" (%s)", port.Service)
+						}
+						bannerInfo := ""
+						if port.Banner != "" {
+							bannerInfo = fmt.Sprintf(" - %q", port.Banner)
+						}
+						fmt.Printf("  %d/tcp%s - %s%s\n", port.Port, serviceInfo, port.Response.Round(time.Microsecond), bannerInfo)
+					}
+				}
+			} else {
+				fmt.Println("No open ports found.")
+			}
+			fmt.Println("--------------------")
 		}
-		fmt.Println("--------------------")
 	}
 }
