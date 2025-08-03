@@ -1,122 +1,115 @@
-# Enhanced TCP Port Scanner 🔍
+# Go Port Scanner
 
-[![Go](https://img.shields.io/badge/Go-1.19+-00ADD8.svg)](https://golang.org/)
-[![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/Kathitjoshi/GopherRecon)
-[![Build Status](https://img.shields.io/badge/Build-Passing-brightgreen.svg)](https://github.comKathitjoshi/GopherRecon)
-[![Security](https://img.shields.io/badge/Security-Ethical%20Use%20Only-red.svg)](https://github.com/Kathitjoshi/GopherRecon)
-[![Concurrency](https://img.shields.io/badge/Concurrency-High%20Performance-blue.svg)](https://github.com/Kathitjoshi/GopherRecon)
+[![Go Version](https://img.shields.io/badge/Go-1.16+-00ADD8?style=flat&logo=go)](https://golang.org)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)](https://github.com/Kathitjoshi/GopherRecon)
+[![Go Report Card](https://goreportcard.com/badge/github.com/Kathitjoshi/GopherRecon)](https://goreportcard.com/report/github.com/Kathitjoshi/GopherRecon)
+[![GitHub release](https://img.shields.io/github/release/Kathitjoshi/GopherRecon.svg)](https://github.com/Kathitjoshi/GopherRecon/releases)
+[![GitHub stars](https://img.shields.io/github/stars/Kathitjoshi/GopherRecon.svg)](https://github.com/Kathitjoshi/GopherRecon/stargazers)
+[![GitHub forks](https://img.shields.io/github/forks/Kathitjoshi/GopherRecon.svg)](https://github.com/Kathitjoshi/GopherRecon/network)
+[![GitHub issues](https://img.shields.io/github/issues/Kathitjoshi/GopherRecon.svg)](https://github.com/Kathitjoshi/GopherRecon/issues)
+[![Maintenance](https://img.shields.io/badge/Maintained%3F-yes-green.svg)](https://github.com/Kathitjoshi/GopherRecon/graphs/commit-activity)
 
-A high-performance, concurrent TCP port scanner written in Go with advanced features including service detection, banner grabbing, and multiple output formats. Designed for security professionals, network administrators, and penetration testers.
+A high-performance TCP port scanner written in Go with both command-line interface (CLI) and web UI capabilities. Features concurrent scanning, service detection, banner grabbing, and multiple output formats.
 
-## 🚀 Features
+## Features
 
-### Core Scanning Capabilities
-- **🔥 High-Performance Concurrent Scanning** - Utilizes Go's goroutines for lightning-fast scans
-- **🎯 Flexible Port Specification** - Single ports, ranges, comma-separated lists, or file-based input
-- **⏱️ Configurable Timeouts** - Customizable connection timeouts for different network conditions
-- **🛡️ Service Detection** - Automatic identification of common services (HTTP, SSH, FTP, etc.)
-- **📋 Banner Grabbing** - Capture service banners and initial responses
-- **🚦 Graceful Interruption** - Ctrl+C handling with partial results preservation
+- **Dual Mode Operation**: CLI for automation and Web UI for interactive use
+- **High Performance**: Concurrent scanning with configurable thread pools
+- **Service Detection**: Identifies common services running on open ports
+- **Banner Grabbing**: Captures service banners for reconnaissance
+- **Multiple Output Formats**: JSON, CSV, and human-readable text reports
+- **Flexible Port Specification**: Support for ranges, lists, and file input
+- **Real-time Progress**: JSON-formatted logging for integration with monitoring systems
+- **Graceful Interruption**: Handles Ctrl+C and context cancellation properly
 
-### Output & Reporting
-- **📄 Multiple Output Formats** - JSON, CSV, and human-readable text reports
-- **📊 Comprehensive Statistics** - Detailed scan summaries and timing information
-- **🔍 Structured Logging** - JSON-formatted logs perfect for SIEM integration
-- **💾 File Export** - Save results to files for later analysis
+## Installation
 
-### Advanced Features
-- **🧵 Thread Control** - Configurable concurrency levels (default: CPU cores × 50)
-- **📝 Verbose Mode** - Optional logging of closed ports for complete visibility
-- **🌐 Host Validation** - DNS resolution verification before scanning
-- **⚡ Real-time Progress** - Live logging of scan results as they complete
+### Prerequisites
+- Go 1.16 or later
 
-## 🛠️ Installation
-
-### Option 1: Download Binary (Easiest)
+### Build from Source
 ```bash
-# Download latest release for your platform
-wget https://github.com/Kathitjoshi/GopherRecon/releases/latest/download/GopherRecon-linux-amd64
-chmod +x GopherRecon-linux-amd64
-./GopherRecon-linux-amd64 --help
-```
-
-### Option 2: Build from Source
-```bash
-# Clone the repository
 git clone https://github.com/Kathitjoshi/GopherRecon.git
 cd GopherRecon
-
-# Build the binary
-go build -o GopherRecon PortScanner.go
-
-# Run the scanner
-./GopherRecon --help
+go build -o portscanner PortScanner.go
 ```
 
-### Option 3: Install with Go
+### Direct Run
 ```bash
-go install github.com/Kathitjoshi/GopherRecon@latest
+go run PortScanner.go [options]
 ```
 
-## 🎯 Quick Start
+## Usage
 
-### Basic Usage Examples
+### Command Line Interface (CLI)
 
-**Scan common ports on a website:**
+#### Basic Scanning
 ```bash
-./GopherRecon -host example.com -ports 80,443,8080
+# Scan common web ports
+./portscanner -host example.com -ports 80,443,8080
+
+# Scan a port range
+./portscanner -host 192.168.1.1 -ports 1-1000
+
+# Scan with service detection and banner grabbing
+./portscanner -host scanme.nmap.org -ports 1-1024 -service -banner
 ```
 
-**Scan a range of ports with high concurrency:**
+#### Advanced Options
 ```bash
-./GopherRecon -host 192.168.1.1 -ports 1-1000 -threads 200
+# High-speed scan with custom threads and timeout
+./portscanner -host target.com -ports 1-65535 -threads 500 -timeout 500ms
+
+# Scan from port file with JSON output
+./portscanner -host 10.0.0.1 -port-file ports.txt -output results.json -format json
+
+# Verbose scanning (logs closed ports)
+./portscanner -host target.com -ports 1-100 -verbose
 ```
 
-**Full scan with banner grabbing and JSON output:**
+#### CLI Options
+- `-host string`: Target host to scan (required)
+- `-ports string`: Port specification (e.g., "80,443,1000-2000")
+- `-port-file string`: File containing ports to scan (one per line)
+- `-threads int`: Number of concurrent scanning threads (default: CPU cores × 50)
+- `-timeout duration`: Connection timeout (default: 2s)
+- `-service`: Enable service detection (default: true)
+- `-banner`: Enable banner grabbing (default: false)
+- `-verbose`: Log closed ports for debugging
+- `-output string`: Output file path
+- `-format string`: Output format - "txt", "json", or "csv" (default: "txt")
+
+### Web User Interface
+
+#### Starting the Web UI
 ```bash
-./GopherRecon -host target.com -ports 1-65535 -banner -verbose -output results.json -format json
+# Start on default port 8080
+./portscanner -ui
+
+# Start on custom port
+./portscanner -ui -ui-port 9000
 ```
 
-**Scan ports from a file:**
-```bash
-./GopherRecon -host server.local -port-file common-ports.txt -output scan-results.csv -format csv
-```
+Then navigate to `http://localhost:8080` in your browser.
 
-## 📖 Command Line Options
+#### Web UI Features
+- Interactive form for scan configuration
+- Real-time results display
+- Responsive design for mobile and desktop
+- Persistent form values between scans
+- Detailed port information table
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `-host` | `localhost` | Target host to scan (domain or IP) |
-| `-ports` | `1-1024` | Port specification (ranges, lists, or single ports) |
-| `-port-file` | - | File containing ports to scan (one per line) |
-| `-timeout` | `2s` | Connection timeout (e.g., 500ms, 2s, 1m) |
-| `-threads` | `CPU×50` | Maximum concurrent goroutines |
-| `-verbose` | `false` | Log closed ports in addition to open ports |
-| `-service` | `true` | Enable service detection for common ports |
-| `-banner` | `false` | Enable banner grabbing from open ports |
-| `-output` | - | Output file path for results |
-| `-format` | `txt` | Output format: `txt`, `json`, or `csv` |
+## Port Specification Formats
 
-## 📋 Port Specification Formats
+### Range Notation
+- Single port: `80`
+- Multiple ports: `80,443,8080`
+- Port range: `1-1000`
+- Combined: `22,80,443,1000-2000,8080-8090`
 
-The scanner supports flexible port specification:
-
-```bash
-# Single ports
--ports 80,443,8080
-
-# Port ranges  
--ports 1-1000
-
-# Mixed format
--ports 80,443,1000-2000,8080-8090
-
-# From file (ports.txt)
--port-file ports.txt
-```
-
-**Example ports.txt file:**
+### Port File Format
+Create a text file with one port per line:
 ```
 # Common web ports
 80
@@ -124,47 +117,31 @@ The scanner supports flexible port specification:
 8080
 8443
 
-# Database ports
-3306
-5432
-1433
+# SSH and FTP
+22
+21
 ```
 
-## 📊 Output Formats
+## Output Formats
 
 ### Text Format (Default)
-```
-Port Scan Report
-================
-
-Target Host: example.com
-Scan Time: 2024-01-15 14:30:25 UTC
-Duration: 2.345s
-Total Ports Scanned: 1000
-Open Ports: 3
-Closed Ports: 997
-
-Open Ports Details:
--------------------
-  Port 22/tcp (SSH) - 45.234ms
-  Port 80/tcp (HTTP) - 67.891ms - "Apache/2.4.41"
-  Port 443/tcp (HTTPS) - 89.123ms
-```
+Human-readable report with scan summary and open port details.
 
 ### JSON Format
+Machine-readable format perfect for automation:
 ```json
 {
   "host": "example.com",
-  "start_time": "2024-01-15T14:30:25Z",
-  "end_time": "2024-01-15T14:30:27Z",
-  "duration": "2.345s",
+  "start_time": "2024-01-15T10:30:00Z",
+  "end_time": "2024-01-15T10:30:05Z",
+  "duration": "5.2s",
   "ports": [
     {
-      "port": 22,
+      "port": 80,
       "status": "open",
-      "service": "SSH",
-      "response_time": "45.234ms",
-      "timestamp": "2024-01-15T14:30:25Z"
+      "service": "HTTP",
+      "response_time": "45ms",
+      "timestamp": "2024-01-15T10:30:02Z"
     }
   ],
   "summary": {
@@ -176,172 +153,133 @@ Open Ports Details:
 ```
 
 ### CSV Format
-```csv
-Port,Status,Service,Response_Time,Banner
-22,open,SSH,45.234ms,"OpenSSH 8.2"
-80,open,HTTP,67.891ms,"Apache/2.4.41"
-443,open,HTTPS,89.123ms,""
-```
+Spreadsheet-compatible format for data analysis.
 
-## 🔧 Advanced Usage
+## Performance Tuning
 
-### Performance Tuning
+### Thread Configuration
+- **Low bandwidth/high latency**: 50-100 threads
+- **Local network**: 200-500 threads  
+- **High-speed connection**: 500-1000 threads
+
+### Timeout Settings
+- **Local network**: 100ms-500ms
+- **Internet hosts**: 1s-3s
+- **Slow/unstable connections**: 5s-10s
+
+### Memory Considerations
+Each thread consumes minimal memory (~8KB), but consider:
+- Very large port ranges (1-65535) with high thread counts
+- Banner grabbing increases memory usage per open port
+- Results are stored in memory until scan completion
+
+## Integration Examples
+
+### CI/CD Pipeline
 ```bash
-# High-speed scanning with 500 concurrent threads
-./GopherRecon -host target.com -ports 1-65535 -threads 500 -timeout 500ms
-
-# Conservative scanning for slow networks
-./GopherRecon -host target.com -ports 1-1000 -threads 50 -timeout 5s
+# Security scan in build pipeline
+./portscanner -host staging.myapp.com -ports 1-1024 -format json -output security-scan.json
 ```
 
-### Security Testing Workflow
+### Monitoring Script
 ```bash
-# 1. Quick discovery scan
-./GopherRecon -host target.com -ports 1-1000 -output discovery.json -format json
-
-# 2. Detailed scan of open ports with banner grabbing
-./GopherRecon -host target.com -port-file open-ports.txt -banner -service -output detailed.txt
-
-# 3. Full comprehensive scan
-./GopherRecon -host target.com -ports 1-65535 -banner -verbose -threads 200 -output full-scan.csv -format csv
+#!/bin/bash
+# Daily security audit
+./portscanner -host $1 -ports 1-65535 -threads 1000 -output "scan-$(date +%Y%m%d).json" -format json
 ```
 
-### Integration with Other Tools
-```bash
-# Extract open ports for further scanning
-cat results.json | jq -r '.ports[] | select(.status=="open") | .port' > open-ports.txt
+### Docker Integration
+```dockerfile
+FROM golang:1.19-alpine AS builder
+WORKDIR /app
+COPY PortScanner.go .
+RUN go build -o portscanner PortScanner.go
 
-# Use with nmap for detailed service enumeration
-./GopherRecon -host target.com -ports 1-1000 -format json -output quick-scan.json
-# Then run nmap on discovered open ports
+FROM alpine:latest
+RUN apk --no-cache add ca-certificates
+WORKDIR /root/
+COPY --from=builder /app/portscanner .
+CMD ["./portscanner", "-ui", "-ui-port", "8080"]
 ```
 
-## 🚦 Signal Handling
+## Logging and Monitoring
 
-The scanner supports graceful interruption:
-- **Ctrl+C**: Stops scanning and returns partial results
-- **SIGTERM**: Graceful shutdown with result preservation
-- All completed scans are included in the final report
+The scanner outputs structured JSON logs suitable for log aggregation systems:
 
-## 📈 Performance Characteristics
-
-| Scenario | Ports | Threads | Typical Duration |
-|----------|-------|---------|-----------------|
-| Quick web scan | 10 common ports | 50 | < 1 second |
-| Standard scan | 1-1024 | 200 | 10-30 seconds |
-| Full port scan | 1-65535 | 500 | 2-10 minutes |
-
-*Performance varies based on network conditions and target responsiveness*
-
-## 🛡️ Security & Ethical Use
-
-### ⚠️ Important Legal Notice
-This tool is intended for:
-- ✅ Authorized security testing
-- ✅ Network administration
-- ✅ Educational purposes
-- ✅ Testing your own systems
-
-**Always ensure you have explicit permission before scanning any network or system you don't own.**
-
-### Best Practices
-- Always obtain written authorization before scanning
-- Respect rate limits and don't overwhelm target systems
-- Be aware of local laws and regulations
-- Consider the impact on network resources
-- Document your testing activities
-
-## 🤝 Contributing
-
-Contributions are welcome! Here's how you can help:
-
-### Development Setup
-```bash
-# Clone and setup
-git clone https://github.com/Kathitjoshi/GopherRecon.git
-cd GopherRecon
-
-# Run tests
-go test ./...
-
-# Build and test
-go build -o GopherRecon PortScanner.go
-./GopherRecon -host localhost -ports 22,80,443
+```json
+{"event":"scan_start", "host":"example.com", "ports_to_scan":1000, "threads":100}
+{"event":"scan_result", "host":"example.com", "port":80, "status":"open", "service":"HTTP"}
+{"event":"scan_finished", "host":"example.com", "status":"completed", "duration":"2.5s", "open_ports":3}
 ```
 
-### Contribution Ideas
-- [ ] Add more service fingerprints
-- [ ] Implement UDP scanning
-- [ ] Add IPv6 support
-- [ ] Create web-based interface
-- [ ] Add more output formats (XML, HTML)
-- [ ] Implement port knocking detection
-- [ ] Add integration with vulnerability databases
+## Security Considerations
 
-## 📋 Roadmap
+- **Permission**: Some systems require elevated privileges for certain scans
+- **Rate Limiting**: Respect target system limits to avoid being blocked
+- **Legal Compliance**: Only scan systems you own or have explicit permission to test
+- **Firewall Logs**: Port scanning generates log entries on target systems
+- **Network Policies**: Consider corporate network policies before scanning
 
-### Version 2.0
-- [ ] UDP port scanning capabilities
-- [ ] IPv6 support
-- [ ] Plugin system for custom service detection
-- [ ] Web-based dashboard
-- [ ] Database integration for result storage
-
-### Version 1.5
-- [ ] More service fingerprints
-- [ ] XML output format
-- [ ] Port scan timing templates
-- [ ] Integration with popular security tools
-
-## 🐛 Troubleshooting
+## Troubleshooting
 
 ### Common Issues
 
-**"Permission denied" errors:**
+#### "Host resolution failed"
 ```bash
-# On Linux/Mac, may need elevated privileges for certain operations
-sudo ./GopherRecon -host target.com -ports 1-1024
+# Verify DNS resolution
+nslookup example.com
+# Try IP address directly
+./portscanner -host 192.168.1.1 -ports 80
 ```
 
-**"Too many open files" error:**
+#### "Too many open files"
 ```bash
-# Reduce thread count
-./GopherRecon -host target.com -ports 1-65535 -threads 100
+# Increase system limits
+ulimit -n 65536
+# Or reduce thread count
+./portscanner -host target.com -ports 1-1000 -threads 50
 ```
 
-**Slow scanning:**
+#### Web UI "Template not found"
+The scanner automatically creates templates. If issues persist:
 ```bash
-# Reduce timeout and increase threads
-./GopherRecon -host target.com -ports 1-1000 -timeout 500ms -threads 200
+# Remove and restart to recreate templates
+rm -rf templates/
+./portscanner -ui
 ```
 
-### Performance Tips
-- Adjust thread count based on your system capabilities
-- Use shorter timeouts for local network scanning
-- Consider network bandwidth when setting thread counts
-- Use port files to focus on relevant ports
+### Performance Issues
+- Reduce thread count for stability
+- Increase timeout for slow networks
+- Use smaller port ranges for testing
+- Monitor system resource usage
 
-## 📝 License
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+### Development Setup
+```bash
+git clone https://github.com/Kathitjoshi/GopherRecon.git
+cd GopherRecon
+go mod init portscanner
+go run PortScanner.go -h
+```
+
+## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-## 🙏 Acknowledgments
+## Disclaimer
 
-- Built with the powerful Go programming language
-- Inspired by classic tools like Nmap and Masscan
-- Thanks to the cybersecurity community for testing and feedback
-- Special thanks to contributors and issue reporters
+This tool is intended for legitimate security testing and network administration purposes only. Users are responsible for complying with applicable laws and regulations. The authors are not responsible for any misuse of this software.
 
-## 📊 Project Stats
+## Acknowledgments
 
-![GitHub repo size](https://img.shields.io/github/repo-size/Kathitjoshi/GopherRecon)
-![GitHub code size in bytes](https://img.shields.io/github/languages/code-size/Kathitjoshi/GopherRecon)
-![Go version](https://img.shields.io/github/go-mod/go-version/Kathitjoshi/GopherRecon)
-
----
-
-**⚡ Fast. Reliable. Secure.** 
-
-*Remember: With great scanning power comes great responsibility. Always scan ethically and legally.*
-
-🔍 **Happy Scanning!** If you find this tool useful, please give it a ⭐ star on GitHub!
+- Inspired by nmap and other network discovery tools
+- Built with Go's excellent concurrency primitives
+- Web UI uses semantic HTML and responsive CSS
