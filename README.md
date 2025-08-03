@@ -3,7 +3,6 @@
 [![Go Version](https://img.shields.io/badge/Go-1.16+-00ADD8?style=flat&logo=go)](https://golang.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)](https://github.com/Kathitjoshi/GopherRecon)
-[![Go Report Card](https://goreportcard.com/badge/github.com/Kathitjoshi/GopherRecon)](https://goreportcard.com/report/github.com/Kathitjoshi/GopherRecon)
 [![GitHub release](https://img.shields.io/github/release/Kathitjoshi/GopherRecon.svg)](https://github.com/Kathitjoshi/GopherRecon/releases)
 [![GitHub stars](https://img.shields.io/github/stars/Kathitjoshi/GopherRecon.svg)](https://github.com/Kathitjoshi/GopherRecon/stargazers)
 [![GitHub forks](https://img.shields.io/github/forks/Kathitjoshi/GopherRecon.svg)](https://github.com/Kathitjoshi/GopherRecon/network)
