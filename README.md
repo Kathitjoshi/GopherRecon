@@ -172,34 +172,6 @@ Each thread consumes minimal memory (~8KB), but consider:
 - Banner grabbing increases memory usage per open port
 - Results are stored in memory until scan completion
 
-## Integration Examples
-
-### CI/CD Pipeline
-```bash
-# Security scan in build pipeline
-./portscanner -host staging.myapp.com -ports 1-1024 -format json -output security-scan.json
-```
-
-### Monitoring Script
-```bash
-#!/bin/bash
-# Daily security audit
-./portscanner -host $1 -ports 1-65535 -threads 1000 -output "scan-$(date +%Y%m%d).json" -format json
-```
-
-### Docker Integration
-```dockerfile
-FROM golang:1.19-alpine AS builder
-WORKDIR /app
-COPY PortScanner.go .
-RUN go build -o portscanner PortScanner.go
-
-FROM alpine:latest
-RUN apk --no-cache add ca-certificates
-WORKDIR /root/
-COPY --from=builder /app/portscanner .
-CMD ["./portscanner", "-ui", "-ui-port", "8080"]
-```
 
 ## Logging and Monitoring
 
